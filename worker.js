@@ -2,18 +2,18 @@
 // このファイルはCloudflare Workerのメインハンドラ
 // v1.0: LINE Webhook受信→テキスト指示→GitHub push→LINE返信
 // v1.1追加: LINEファイル受信→種別自動判定→capsules/missions/にGitHub push
-// v1.2修正: sanitizeForFilename強化（「」.md等の除去、30文字制限）
-// v1.3追加: dest指定ルーティング（ファイル先頭の<!-- dest: パス -->で配置先を指定可能）
-// v1.4追加: フォルダ一覧コマンド＆フォルダ中身確認コマンド
-// v1.5改善: 全コマンドの表記揺れ対応（スペースなし・全角スペース・別名追加）
+// v1.2修正: sanitizeForFilename強化(「」.md等の除去、30文字制限)
+// v1.3追加: dest指定ルーティング(ファイル先頭の<!-- dest: パス -->で配置先を指定可能)
+// v1.4追加: フォルダ一覧コマンド&フォルダ中身確認コマンド
+// v1.5改善: 全コマンドの表記揺れ対応(スペースなし・全角スペース・別名追加)
 // v1.6改善: destタグ最優先ルーティング
-// v2.0追加: 安全バリデーション — テキスト指示にプロジェクト名必須化＆missionタグ自動注入
-// v2.5追加: スマート振り分け — ファイルアップロード時の多段階判定＆missionタグ自動注入＆M-リネーム
+// v2.0追加: 安全バリデーション — テキスト指示にプロジェクト名必須化&missionタグ自動注入
+// v2.5追加: スマート振り分け — ファイルアップロード時の多段階判定&missionタグ自動注入&M-リネーム
 // v2.1追加: リッチメニュー対応 — ヘルプ/読むコマンド追加、ファイル内容LINE表示
 // v2.2追加: Flex Message対応 — カプセル/フォルダ一覧をタップ可能なボタン付きカードで返信
-// v2.3追加: ファイル名降順ソート＆「もっと見る」ページネーション
-// v2.4改善: 日付抽出ソート（全ファイル混合で新しい順）＆ボタン表示名短縮
-// v2.6追加: キーワード振り分け強化 — アイデア/メモ/計画書対応＋ideasサブフォルダ自動判定＋inboxガイド
+// v2.3追加: ファイル名降順ソート&「もっと見る」ページネーション
+// v2.4改善: 日付抽出ソート(全ファイル混合で新しい順)&ボタン表示名短縮
+// v2.6追加: キーワード振り分け強化 — アイデア/メモ/計画書対応+ideasサブフォルダ自動判定+inboxガイド
 
 // ============================================================
 // 定数定義
@@ -30,17 +30,17 @@ const VALID_PROJECTS = [
 const DEFAULT_PROJECT = 'genba-pro';
 
 // v1.1追加 v2.6拡張 ファイル種別→保管先のマッピングルール
-// ファイル名に含まれるキーワードで判定（上から順に評価、最初にマッチしたものが適用）
-// ★DIFFをMASTERより先に判定（「MASTER追記用_DIFF」のようなケースに備える）
+// ファイル名に含まれるキーワードで判定(上から順に評価、最初にマッチしたものが適用)
+// ★DIFFをMASTERより先に判定(「MASTER追記用_DIFF」のようなケースに備える)
 const FILE_ROUTING_RULES = [
   // capsules/daily/ — DIFFカプセル・セッション系
   { keywords: ['DIFF_DEV', '開発カプセル'],   dest: 'capsules/daily' },
   { keywords: ['DIFF_総合', '思い出カプセル_DIFF'], dest: 'capsules/daily' },
   { keywords: ['DIFF'],                       dest: 'capsules/daily' },
   { keywords: ['引き継ぎ', 'セッションまとめ', 'セッション完全まとめ'], dest: 'capsules/daily' },
-  // capsules/daily/ — v2.6追加: メモ系もdailyへ（見失い防止）
+  // capsules/daily/ — v2.6追加: メモ系もdailyへ(見失い防止)
   { keywords: ['メモ', 'memo', 'ノート', 'note'], dest: 'capsules/daily' },
-  // capsules/master/ — MASTER系（CURRENT/ARCHIVEも含む）
+  // capsules/master/ — MASTER系(CURRENT/ARCHIVEも含む)
   { keywords: ['MASTER'],                     dest: 'capsules/master' },
   // capsules/plans/ — v2.6拡張: 計画書/proposal追加
   { keywords: ['企画書', '計画書', 'proposal'], dest: 'capsules/plans' },
@@ -69,7 +69,7 @@ const GITHUB_OWNER = 'akiyamanx';
 const GITHUB_REPO = 'cocomi-postman';
 
 // ============================================================
-// 署名検証（v1.0から変更なし）
+// 署名検証(v1.0から変更なし)
 // ============================================================
 
 // HMAC-SHA256でLINE Webhookの署名を検証する
@@ -88,11 +88,11 @@ async function verifySignature(body, signature, channelSecret) {
 }
 
 // ============================================================
-// テキスト指示パース（v2.0 安全バリデーション強化）
+// テキスト指示パース(v2.0 安全バリデーション強化)
 // ============================================================
 
 // v2.0修正: テキストをプロジェクト名と指示内容に分離する
-// プロジェクト名が明示されていない場合はnullを返す（安全策）
+// プロジェクト名が明示されていない場合はnullを返す(安全策)
 function parseInstruction(text) {
   const match = text.match(/^([^:：]+)[：:](.+)$/s);
   if (match) {
@@ -101,7 +101,7 @@ function parseInstruction(text) {
       return { project: projectCandidate, instruction: match[2].trim(), valid: true };
     }
   }
-  // v2.0変更: プロジェクト名なし → 無効扱い（以前はデフォルトに飛ばしていた）
+  // v2.0変更: プロジェクト名なし → 無効扱い(以前はデフォルトに飛ばしていた)
   return { project: null, instruction: text.trim(), valid: false };
 }
 
@@ -109,7 +109,7 @@ function parseInstruction(text) {
 // ID・ファイル名生成
 // ============================================================
 
-// M-LINE-MMDD-HHmm形式のミッションIDを生成する（JST）
+// M-LINE-MMDD-HHmm形式のミッションIDを生成する(JST)
 function generateMissionId() {
   const now = new Date();
   const jst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
@@ -124,13 +124,13 @@ function generateMissionId() {
 function sanitizeForFilename(text) {
   return text
     .replace(/\.[a-zA-Z]{1,5}\b/g, '')
-    .replace(/[\/\\?%*:|"<>「」『』（）()\[\]{}.,;:!！？#＃&＆@＠·。、]/g, '')
+    .replace(/[\/\\?%*:|"<>「」『』()()\[\]{}.,;:!!?##&&@@·。、]/g, '')
     .replace(/\s+/g, '')
     .substring(0, 30);
 }
 
 // ============================================================
-// 指示書Markdown生成（v2.0 missionタグ自動注入）
+// 指示書Markdown生成(v2.0 missionタグ自動注入)
 // ============================================================
 
 // v2.0修正: 指示書に <!-- mission: project-id --> を自動注入する
@@ -150,7 +150,7 @@ ${instruction}
 }
 
 // ============================================================
-// ファイル種別判定（v1.1 + v1.3 + v2.0強化）
+// ファイル種別判定(v1.1 + v1.3 + v2.0強化)
 // ============================================================
 
 // v1.1 ファイル名からキーワードマッチで保管先フォルダを判定する
@@ -231,12 +231,12 @@ function isMissionLikeFile(fileName) {
 // 優先順位:
 //   ① destタグ明示指定 → そのまま従う
 //   ② missionタグあり → missions/{project}/ に配達
-//   ③ projectタグあり → missions/{project}/ に配達（missionタグ自動注入予約）
-//   ④ キーワードルーティング（capsule/ideas等）← v2.6で指示書判定より先に評価
+//   ③ projectタグあり → missions/{project}/ に配達(missionタグ自動注入予約)
+//   ④ キーワードルーティング(capsule/ideas等)← v2.6で指示書判定より先に評価
 //   ⑤ 指示書っぽいファイル名だがタグなし → inbox/unvalidated/ + LINE聞き返し予約
 //   ⑥ デフォルト inbox/
 function resolveDestination(fileName, content) {
-  // ① destタグ明示指定（最優先）
+  // ① destタグ明示指定(最優先)
   const destTag = extractDestFromContent(content);
   if (destTag) {
     // v2.5追加: dest=missions/inbox でも missionタグがあれば正しいフォルダに振り替え
@@ -259,13 +259,13 @@ function resolveDestination(fileName, content) {
     return { dest: `missions/${missionTag}`, method: 'mission-tag' };
   }
 
-  // ③ projectタグあり → プロジェクトフォルダへ（missionタグ自動注入予約）
+  // ③ projectタグあり → プロジェクトフォルダへ(missionタグ自動注入予約)
   const projectTag = extractProjectTag(content);
   if (projectTag && VALID_PROJECTS.includes(projectTag)) {
     return { dest: `missions/${projectTag}`, method: 'project-tag', needsMissionTag: true, project: projectTag };
   }
 
-  // ④ キーワードルーティング（capsule等）— v2.6修正: 指示書判定より先に評価
+  // ④ キーワードルーティング(capsule等)— v2.6修正: 指示書判定より先に評価
   // M_CURRENT_...MASTER_... のようなファイルが /^m[-_]/ で誤判定されるのを防ぐ
   const keywordDest = classifyFile(fileName);
   if (keywordDest) {
@@ -285,7 +285,7 @@ function resolveDestination(fileName, content) {
 }
 
 // ============================================================
-// LINEからファイルをダウンロード（v1.1から変更なし）
+// LINEからファイルをダウンロード(v1.1から変更なし)
 // ============================================================
 
 async function downloadFileFromLine(env, messageId) {
@@ -306,7 +306,7 @@ async function downloadFileFromLine(env, messageId) {
 // GitHub API操作
 // ============================================================
 
-// GitHub Contents APIでファイルをpushする（v1.0から変更なし）
+// GitHub Contents APIでファイルをpushする(v1.0から変更なし)
 async function pushToGitHub(env, filePath, content, commitMessage) {
   const url = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${filePath}`;
   const b64 = btoa(unescape(encodeURIComponent(content)));
@@ -331,7 +331,7 @@ async function pushToGitHub(env, filePath, content, commitMessage) {
   return await resp.json();
 }
 
-// v1.1追加: 既存ファイルのSHAを取得する（上書き更新に必要）
+// v1.1追加: 既存ファイルのSHAを取得する(上書き更新に必要)
 async function getFileSha(env, filePath) {
   const url = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${filePath}`;
   const resp = await fetch(url, {
@@ -346,7 +346,7 @@ async function getFileSha(env, filePath) {
   return data.sha;
 }
 
-// v1.1追加: ファイルをpush（新規 or 上書き自動判定）
+// v1.1追加: ファイルをpush(新規 or 上書き自動判定)
 async function pushFileToGitHub(env, filePath, content, commitMessage) {
   const url = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${filePath}`;
   const b64 = btoa(unescape(encodeURIComponent(content)));
@@ -373,7 +373,7 @@ async function pushFileToGitHub(env, filePath, content, commitMessage) {
 }
 
 // ============================================================
-// v2.4追加: ファイル名ユーティリティ（日付抽出＆表示名短縮）
+// v2.4追加: ファイル名ユーティリティ(日付抽出&表示名短縮)
 // ============================================================
 
 // v2.4追加: ファイル名のどこかにあるYYYY-MM-DD形式の日付を抽出する
@@ -386,7 +386,7 @@ function extractDateFromName(name) {
   return match ? match[1] : null;
 }
 
-// v2.4追加: LINEボタン用にファイル名だけ表示（日付は別行で表示するため除去）
+// v2.4追加: LINEボタン用にファイル名だけ表示(日付は別行で表示するため除去)
 // 例: "2026-02-26_思い出カプセル_DIFF_総合_03.md" → "思い出カプセル_DIFF_総合_03"
 // 例: "capsule_DIFF_2026-02-25_01.md" → "capsule_DIFF_01"
 function shortenFileNameOnly(name) {
@@ -401,7 +401,7 @@ function shortenFileNameOnly(name) {
   // 先頭・末尾のアンダースコアやハイフンを除去
   display = display.replace(/^[_-]+|[_-]+$/g, '');
 
-  // ボタンラベルの最大文字数（Flex Messageのbutton labelは全角約20文字が目安）
+  // ボタンラベルの最大文字数(Flex Messageのbutton labelは全角約20文字が目安)
   if (display.length > 30) {
     display = display.substring(0, 29) + '…';
   }
@@ -409,7 +409,7 @@ function shortenFileNameOnly(name) {
   return display;
 }
 
-// v2.4追加: LINEボタン用にファイル名を短く整形する（shortenDisplayNameは後方互換用に残す）
+// v2.4追加: LINEボタン用にファイル名を短く整形する(shortenDisplayNameは後方互換用に残す)
 // ファイル名から日付・拡張子を抽出し、短い表示名を生成
 // 例: "2026-02-26_思い出カプセル_DIFF_総合_03.md" → "📝 02-26 思い出カプセル_DIFF_総合_03"
 // 例: "capsule_DIFF_2026-02-25_01.md" → "📝 02-25 capsule_DIFF_01"
@@ -422,9 +422,9 @@ function shortenDisplayName(name) {
   const dateMatch = display.match(/(\d{4})-(\d{2})-(\d{2})/);
   let datePrefix = '';
   if (dateMatch) {
-    // MM-DD形式に短縮（西暦省略でスペース節約）
+    // MM-DD形式に短縮(西暦省略でスペース節約)
     datePrefix = `${dateMatch[2]}-${dateMatch[3]} `;
-    // ファイル名から日付部分を除去（前後の区切り文字も1つ除去）
+    // ファイル名から日付部分を除去(前後の区切り文字も1つ除去)
     display = display.replace(/[_-]?\d{4}-\d{2}-\d{2}[_-]?/, '_');
   }
 
@@ -443,11 +443,11 @@ function shortenDisplayName(name) {
 }
 
 // ============================================================
-// GitHub フォルダ一覧取得（v1.1 + v1.4強化）
+// GitHub フォルダ一覧取得(v1.1 + v1.4強化)
 // ============================================================
 
-// v1.1追加: GitHubフォルダの一覧を取得する（ファイルのみ）
-// v2.4改善: ファイル名から日付を抽出してソート（命名規則がバラバラでもOK）
+// v1.1追加: GitHubフォルダの一覧を取得する(ファイルのみ)
+// v2.4改善: ファイル名から日付を抽出してソート(命名規則がバラバラでもOK)
 async function listGitHubFolder(env, folderPath) {
   const url = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${folderPath}`;
   const resp = await fetch(url, {
@@ -460,7 +460,7 @@ async function listGitHubFolder(env, folderPath) {
   if (!resp.ok) throw new Error(`GitHub API error: ${resp.status}`);
   const data = await resp.json();
   const files = Array.isArray(data) ? data.filter(item => item.type === 'file') : [];
-  // v2.4改善: ファイル名から日付を抽出してソート（日付なしファイルは末尾）
+  // v2.4改善: ファイル名から日付を抽出してソート(日付なしファイルは末尾)
   files.sort((a, b) => {
     const dateA = extractDateFromName(a.name);
     const dateB = extractDateFromName(b.name);
@@ -475,7 +475,7 @@ async function listGitHubFolder(env, folderPath) {
   return files;
 }
 
-// v1.4追加: GitHubフォルダの全アイテム（ファイル＋サブフォルダ）を取得する
+// v1.4追加: GitHubフォルダの全アイテム(ファイル+サブフォルダ)を取得する
 async function listGitHubFolderAll(env, folderPath) {
   const url = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${folderPath}`;
   const resp = await fetch(url, {
@@ -544,7 +544,7 @@ function buildFolderSummary(tree) {
 }
 
 // ============================================================
-// v2.1追加: GitHubファイル内容取得（読むコマンド用）
+// v2.1追加: GitHubファイル内容取得(読むコマンド用)
 // ============================================================
 
 // v2.1追加: GitHubからファイルの中身を取得してテキストで返す
@@ -568,7 +568,7 @@ async function readFileFromGitHub(env, filePath) {
     return { error: 'is_directory', path: filePath };
   }
 
-  // Base64デコード（UTF-8対応）
+  // Base64デコード(UTF-8対応)
   const cleaned = (data.content || '').replace(/\n/g, '');
   const bytes = Uint8Array.from(atob(cleaned), c => c.charCodeAt(0));
   const content = new TextDecoder('utf-8').decode(bytes);
@@ -614,11 +614,11 @@ async function replyFlexToLine(env, replyToken, altText, flexContents) {
 }
 
 // v2.2追加: ファイル一覧をタップ可能なFlex Messageに変換する
-// v2.3修正: ページネーション対応（page引数、「もっと見る」ボタン追加）
+// v2.3修正: ページネーション対応(page引数、「もっと見る」ボタン追加)
 // ファイルをタップすると「読む フォルダパス/ファイル名」が自動送信される
 function buildFileListFlex(title, emoji, sections, moreCommand) {
   // sectionsは [{label, files: [{name, path}], total}] の配列
-  // moreCommandは「もっと見る」ボタンで送信するテキスト（nullならボタンなし）
+  // moreCommandは「もっと見る」ボタンで送信するテキスト(nullならボタンなし)
   const bodyContents = [
     {
       type: 'text',
@@ -642,7 +642,7 @@ function buildFileListFlex(title, emoji, sections, moreCommand) {
       margin: 'lg'
     });
 
-    // ファイルボタン（v2.4改善: 日付ラベル＋ファイル名ボタンの2段構成）
+    // ファイルボタン(v2.4改善: 日付ラベル+ファイル名ボタンの2段構成)
     let lastDate = ''; // 同じ日付の連続表示を避ける
     for (const file of section.files) {
       // 日付を抽出
@@ -664,7 +664,7 @@ function buildFileListFlex(title, emoji, sections, moreCommand) {
         lastDate = dateLabelText;
       }
 
-      // ファイル名（日付と拡張子を除去して表示）
+      // ファイル名(日付と拡張子を除去して表示)
       const displayName = shortenFileNameOnly(file.name);
 
       bodyContents.push({
@@ -710,7 +710,7 @@ function buildFileListFlex(title, emoji, sections, moreCommand) {
   };
 }
 
-// v2.2追加: フォルダ内のファイル＋サブフォルダをFlex Messageに変換する
+// v2.2追加: フォルダ内のファイル+サブフォルダをFlex Messageに変換する
 function buildFolderContentsFlex(folderPath, dirs, files) {
   const bodyContents = [
     {
@@ -761,7 +761,7 @@ function buildFolderContentsFlex(folderPath, dirs, files) {
     const displayFiles = files.slice(-15);
     let lastDate = '';
     for (const f of displayFiles) {
-      // v2.4改善: 日付ラベル＋ファイル名ボタンの2段構成
+      // v2.4改善: 日付ラベル+ファイル名ボタンの2段構成
       const fileDate = extractDateFromName(f.name);
       const dateLabelText = fileDate ? fileDate.substring(5) : '';
 
@@ -804,7 +804,7 @@ function buildFolderContentsFlex(folderPath, dirs, files) {
   if (dirs.length === 0 && files.length === 0) {
     bodyContents.push({
       type: 'text',
-      text: '（空のフォルダです）',
+      text: '(空のフォルダです)',
       size: 'sm',
       color: '#999999',
       margin: 'lg'
@@ -824,7 +824,7 @@ function buildFolderContentsFlex(folderPath, dirs, files) {
 }
 
 // ============================================================
-// ファイルメッセージの処理（v1.1 + v1.3 + v2.0強化）
+// ファイルメッセージの処理(v1.1 + v1.3 + v2.0強化)
 // ============================================================
 
 // v2.0修正: missions/に配達されるファイルにmissionタグ検証を追加
@@ -860,9 +860,9 @@ async function handleFileMessage(env, event) {
     await replyToLine(env, replyToken,
       `📥 ファイルをinboxに保管しました。\n\n` +
       `📄 ファイル: ${fileName}\n\n` +
-      `🤔 指示書として実行したい場合は、ファイルの先頭にヘッダーを追加してね：\n\n` +
+      `🤔 指示書として実行したい場合は、ファイルの先頭にヘッダーを追加してね:\n\n` +
       `<!-- mission: プロジェクト名 -->\n\n` +
-      `またはLINEテキストで直接指示もOK：\n` +
+      `またはLINEテキストで直接指示もOK:\n` +
       `例: genba-pro: ログイン画面の色を変更\n\n` +
       `📂 使えるプロジェクト名:\n` +
       `  ${VALID_PROJECTS.join(', ')}`
@@ -887,7 +887,7 @@ async function handleFileMessage(env, event) {
   if (destFolder.startsWith('missions/')) {
     const missionTag = extractMissionTag(content);
     if (!missionTag) {
-      safetyWarning = '\n\n⚠️ <!-- mission: project-id --> ヘッダーがありません。\nタブレットのバリデーションで実行拒否される可能性があります。\nクロちゃんに確認してね！';
+      safetyWarning = '\n\n⚠️ <!-- mission: project-id --> ヘッダーがありません。\nタブレットのバリデーションで実行拒否される可能性があります。\nクロちゃんに確認してね!';
     }
   }
 
@@ -926,7 +926,7 @@ async function handleFileMessage(env, event) {
     case 'project-tag':
       routingInfo = '📂 projectタグから自動振り分け + missionタグ自動注入'; break;
     default:
-      routingInfo = '📥 デフォルト（inbox）\n\n💡 自動振り分けヒント:\nファイル名に以下を含めると自動で振り分けるよ！\n📋 DIFF/MASTER → カプセル\n📝 企画書/計画書 → 企画書\n💡 アイデア/TODO → アイデア保管庫\n📓 メモ/ノート → デイリー';
+      routingInfo = '📥 デフォルト(inbox)\n\n💡 自動振り分けヒント:\nファイル名に以下を含めると自動で振り分けるよ!\n📋 DIFF/MASTER → カプセル\n📝 企画書/計画書 → 企画書\n💡 アイデア/TODO → アイデア保管庫\n📓 メモ/ノート → デイリー';
   }
 
   // v2.5追加: リネーム情報
@@ -935,17 +935,17 @@ async function handleFileMessage(env, event) {
     renameInfo = `\n📝 リネーム: ${finalFileName}`;
   }
 
-  const replyMessage = `${emoji} ${action}完了！\n\n📂 保管先: ${filePath}\n📄 ファイル: ${fileName}${renameInfo}\n📏 サイズ: 約${content.length}文字\n${routingInfo}\n\nGitHubに安全に保管しました！🔒${safetyWarning}`;
+  const replyMessage = `${emoji} ${action}完了!\n\n📂 保管先: ${filePath}\n📄 ファイル: ${fileName}${renameInfo}\n📏 サイズ: 約${content.length}文字\n${routingInfo}\n\nGitHubに安全に保管しました!🔒${safetyWarning}`;
 
   await replyToLine(env, replyToken, replyMessage);
   console.log(`✅ ${action}完了: ${filePath} (${method})`);
 }
 
 // ============================================================
-// v1.5改善: テキスト正規化＆コマンド判定の柔軟化
+// v1.5改善: テキスト正規化&コマンド判定の柔軟化
 // ============================================================
 
-// v1.5追加: テキストを正規化する（全角スペース→半角、前後トリム）
+// v1.5追加: テキストを正規化する(全角スペース→半角、前後トリム)
 function normalizeText(text) {
   return text.trim().replace(/\u3000/g, ' ');
 }
@@ -959,16 +959,16 @@ function extractFolderPath(text) {
   return null;
 }
 
-// v1.5改善: コマンド判定（表記揺れ対応強化版）
+// v1.5改善: コマンド判定(表記揺れ対応強化版)
 async function handleCommand(env, event) {
   const raw = event.message.text.trim();
   const text = normalizeText(raw);
 
-  // --- 「状態」コマンド（v2.1: バージョン表示更新）---
+  // --- 「状態」コマンド(v2.1: バージョン表示更新)---
   const statusAliases = ['状態', 'じょうたい', 'ステータス', 'status', 'ポストマン', 'postman'];
   if (statusAliases.includes(text.toLowerCase())) {
     await replyToLine(env, event.replyToken,
-      '🐾 COCOMI Worker v2.6 稼働中！\n\n' +
+      '🐾 COCOMI Worker v2.6 稼働中!\n\n' +
       '📋 テキスト指示: 「プロジェクト名: 指示内容」\n' +
       '📁 ファイル配達: .mdファイルを送信\n' +
       '💊 カプセル保管: カプセルファイルを送信→自動判定→GitHub保管\n' +
@@ -979,13 +979,13 @@ async function handleCommand(env, event) {
       '📖 ファイル表示: 「読む ○○」でファイル内容を表示\n' +
       '❓ ヘルプ: 「ヘルプ」でコマンド一覧\n\n' +
       '🛡️ v2.0: 安全バリデーション\n' +
-      '🆕 v2.4: 日付抽出ソート＆ボタン表示名短縮\n' +
-      '🆕 v2.6: キーワード振り分け強化（アイデア/メモ/計画書＋inboxガイド）'
+      '🆕 v2.4: 日付抽出ソート&ボタン表示名短縮\n' +
+      '🆕 v2.6: キーワード振り分け強化(アイデア/メモ/計画書+inboxガイド)'
     );
     return true;
   }
 
-  // --- v2.1追加: 「ヘルプ 指示」コマンド（「ヘルプ」より先に判定）---
+  // --- v2.1追加: 「ヘルプ 指示」コマンド(「ヘルプ」より先に判定)---
   const helpInstructAliases = ['ヘルプ 指示', 'ヘルプ指示', 'help 指示'];
   if (helpInstructAliases.includes(text.toLowerCase())) {
     await replyToLine(env, event.replyToken,
@@ -1011,7 +1011,7 @@ async function handleCommand(env, event) {
   }
 
   // --- v2.1追加: 「ヘルプ」コマンド ---
-  const helpAliases = ['ヘルプ', 'へるぷ', 'help', '？', '?'];
+  const helpAliases = ['ヘルプ', 'へるぷ', 'help', '?', '?'];
   if (helpAliases.includes(text.toLowerCase())) {
     await replyToLine(env, event.replyToken,
       '📮 COCOMI Postman コマンド一覧\n\n' +
@@ -1073,7 +1073,7 @@ async function handleCommand(env, event) {
         replyText = `📖 ファイル内容\n📄 ${pathRaw}\n━━━━━━━━━━━━━━━\n${result.content}\n━━━━━━━━━━━━━━━\n📏 ${result.size}文字`;
       } else {
         const truncated = result.content.substring(0, MAX_CHARS);
-        replyText = `📖 ファイル内容（先頭${MAX_CHARS}文字）\n📄 ${pathRaw}\n━━━━━━━━━━━━━━━\n${truncated}\n...（全${result.size}文字中、先頭${MAX_CHARS}文字を表示）\n━━━━━━━━━━━━━━━`;
+        replyText = `📖 ファイル内容(先頭${MAX_CHARS}文字)\n📄 ${pathRaw}\n━━━━━━━━━━━━━━━\n${truncated}\n...(全${result.size}文字中、先頭${MAX_CHARS}文字を表示)\n━━━━━━━━━━━━━━━`;
       }
 
       await replyToLine(env, event.replyToken, replyText);
@@ -1086,7 +1086,7 @@ async function handleCommand(env, event) {
     return true;
   }
 
-  // --- 「カプセル」コマンド（v2.4: 全ファイル日付順ごちゃまぜ + 表示名短縮）---
+  // --- 「カプセル」コマンド(v2.4: 全ファイル日付順ごちゃまぜ + 表示名短縮)---
   const capsuleMatch = text.match(/^(カプセル|かぷせる|capsule|capsules)(\s+(\d+))?$/i);
   if (capsuleMatch) {
     const page = parseInt(capsuleMatch[3] || '1', 10);
@@ -1105,7 +1105,7 @@ async function handleCommand(env, event) {
         ...plansList.map(f => ({ name: f.name, path: `capsules/plans/${f.name}`, section: 'plans' }))
       ];
 
-      // 日付抽出で全体ソート（セクション無関係に新しい順）
+      // 日付抽出で全体ソート(セクション無関係に新しい順)
       allFiles.sort((a, b) => {
         const dateA = extractDateFromName(a.name);
         const dateB = extractDateFromName(b.name);
@@ -1119,7 +1119,7 @@ async function handleCommand(env, event) {
 
       if (totalFiles === 0) {
         await replyToLine(env, event.replyToken,
-          '📦 カプセル保管庫はまだ空です。\nファイルを送信して保管を始めよう！'
+          '📦 カプセル保管庫はまだ空です。\nファイルを送信して保管を始めよう!'
         );
         return true;
       }
@@ -1146,7 +1146,7 @@ async function handleCommand(env, event) {
         }))
       }];
 
-      // 「もっと見る」ボタン（次ページがあるか判定）
+      // 「もっと見る」ボタン(次ページがあるか判定)
       const hasMore = offset + PER_PAGE < totalFiles;
       const moreCommand = hasMore ? `カプセル ${page + 1}` : null;
 
@@ -1159,13 +1159,13 @@ async function handleCommand(env, event) {
     } catch (err) {
       console.error('カプセル一覧取得エラー:', err);
       await replyToLine(env, event.replyToken,
-        '📦 カプセル保管庫はまだ空です。\nファイルを送信して保管を始めよう！'
+        '📦 カプセル保管庫はまだ空です。\nファイルを送信して保管を始めよう!'
       );
     }
     return true;
   }
 
-  // --- 「アイデア一覧」コマンド（v1.5: 表記揺れ追加）---
+  // --- 「アイデア一覧」コマンド(v1.5: 表記揺れ追加)---
   const ideaAliases = [
     'アイデア一覧', 'アイディア一覧', 'アイデア', 'アイディア',
     'ideas', 'idea', 'あいであ'
@@ -1194,13 +1194,13 @@ async function handleCommand(env, event) {
     } catch (err) {
       console.error('アイデア一覧取得エラー:', err);
       await replyToLine(env, event.replyToken,
-        '💡 アイデア保管庫はまだ空です。\n「アイデア app: 〇〇」で保管できるよ！'
+        '💡 アイデア保管庫はまだ空です。\n「アイデア app: 〇〇」で保管できるよ!'
       );
     }
     return true;
   }
 
-  // --- v1.5改善: 「フォルダ」系コマンド（統合判定）---
+  // --- v1.5改善: 「フォルダ」系コマンド(統合判定)---
   if (text.startsWith('フォルダ') || text === 'folders') {
 
     // 「フォルダ一覧」判定
@@ -1248,7 +1248,7 @@ async function handleCommand(env, event) {
         }
 
         reply += '🔍 詳しく見るには「フォルダ ○○」と送ってね\n';
-        reply += '※ スペースなしでもOK！例: 「フォルダcapsules/daily」';
+        reply += '※ スペースなしでもOK!例: 「フォルダcapsules/daily」';
 
         await replyToLine(env, event.replyToken, reply);
       } catch (err) {
@@ -1260,7 +1260,7 @@ async function handleCommand(env, event) {
       return true;
     }
 
-    // 「フォルダ ○○」（中身確認）— v2.2: Flex Message対応
+    // 「フォルダ ○○」(中身確認)— v2.2: Flex Message対応
     const targetPath = extractFolderPath(text);
     if (targetPath) {
       try {
@@ -1300,9 +1300,9 @@ async function handleCommand(env, event) {
 export default {
   async fetch(request, env) {
 
-    // GETリクエスト → ヘルスチェック（v2.0更新）
+    // GETリクエスト → ヘルスチェック(v2.0更新)
     if (request.method === 'GET') {
-      return new Response('🐾 COCOMI Worker is alive! v2.5\n📁 全機能対応\n🆕 v2.5: スマート振り分け＆missionタグ自動注入', {
+      return new Response('🐾 COCOMI Worker is alive! v2.5\n📁 全機能対応\n🆕 v2.5: スマート振り分け&missionタグ自動注入', {
         headers: { 'Content-Type': 'text/plain; charset=utf-8' }
       });
     }
@@ -1334,7 +1334,7 @@ export default {
 
           // テキストメッセージの処理
           if (event.message.type === 'text') {
-            // コマンド判定（v1.5: 柔軟な判定）
+            // コマンド判定(v1.5: 柔軟な判定)
             const isCommand = await handleCommand(env, event);
             if (isCommand) continue;
 
@@ -1342,7 +1342,7 @@ export default {
             const { project, instruction, valid } = parseInstruction(event.message.text);
 
             if (!valid) {
-              // v2.0追加: プロジェクト名なし → inboxに退避＆ガイド返信
+              // v2.0追加: プロジェクト名なし → inboxに退避&ガイド返信
               const missionId = generateMissionId();
               const sanitized = sanitizeForFilename(instruction);
               const inboxPath = `inbox/unvalidated/${missionId}-${sanitized}.md`;
@@ -1353,7 +1353,7 @@ export default {
 
               await replyToLine(env, event.replyToken,
                 `📥 テキストをinboxに保管しました。\n\n` +
-                `🛡️ 指示として実行するには、プロジェクト名を付けて送ってね：\n\n` +
+                `🛡️ 指示として実行するには、プロジェクト名を付けて送ってね:\n\n` +
                 `📋 書き方: 「プロジェクト名: やりたいこと」\n\n` +
                 `例:\n` +
                 `  genba-pro: ログイン画面の色を青に\n` +
@@ -1365,7 +1365,7 @@ export default {
               continue;
             }
 
-            // 有効なテキスト指示 → missions/に配達（missionタグ自動注入済み）
+            // 有効なテキスト指示 → missions/に配達(missionタグ自動注入済み)
             const missionId = generateMissionId();
             const sanitized = sanitizeForFilename(instruction);
             const filePath = `missions/${project}/${missionId}-${sanitized}.md`;
@@ -1375,26 +1375,17 @@ export default {
             await pushToGitHub(env, filePath, content, commitMessage);
 
             await replyToLine(env, event.replyToken,
-              `📦 指示受付完了！\n\n` +
+              `📦 指示受付完了!\n\n` +
               `📂 プロジェクト: ${project}\n` +
               `📋 ミッション: ${missionId}\n` +
               `📝 内容: ${instruction.substring(0, 50)}\n` +
               `🛡️ missionタグ: ✅ 自動付与済み\n\n` +
-              `タブレットに配達しました！🚚\n` +
+              `タブレットに配達しました!🚚\n` +
               `実行が始まったらLINEで通知するね`
             );
           }
         } catch (err) {
-          console.error('Worker error:', err);
-          if (event.replyToken) {
-            try {
-              await replyToLine(env, event.replyToken,
-                `⚠️ エラーが発生しました\n${err.message.substring(0, 100)}`
-              );
-            } catch (_) {
-              // 返信失敗は無視
-            }
-          }
+          console.error('Fatal error:', err);
         }
       }
 
