@@ -1,0 +1,43 @@
+# Node.js dependencies (if ever added)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Wrangler local state
+.wrangler/
+.dev.vars
+.dev.vars.*
+
+# Environment variables (never commit these!)
+.env
+.env.local
+.env.*.local
+
+# Editor & IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# OS
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.temp
+tmp/
+temp/
+
+# Build output (if ever added)
+dist/
+build/
+out/
