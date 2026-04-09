@@ -1,0 +1,54 @@
+# wrangler.toml — cocomi-worker v2.6
+# このファイルはCloudflare Worker設定のバックアップ
+# 2026-04-09 Plan C でダッシュボード情報から逆生成
+#
+# ⚠️ このファイルは現時点では「バックアップ記録」としての役割のみ。
+# 現在 cocomi-worker はCloudflareダッシュボード直接管理されており、
+# このwrangler.tomlからのデプロイは行われていない。
+# 将来 GitHub Actions 自動デプロイに移行する際に使用する。
+
+name = "cocomi-worker"
+main = "worker.js"
+compatibility_date = "2026-02-22"
+
+# ------------------------------------------------------------
+# Observability 設定（ダッシュボード確認済み 2026-04-09）
+# ------------------------------------------------------------
+[observability]
+enabled = true
+head_sampling_rate = 1  # Logs: 100% sampling
+
+# ------------------------------------------------------------
+# Secrets（ダッシュボードで管理、ここには値を書かない）
+# ------------------------------------------------------------
+# 以下の4つのSecretがCloudflareダッシュボードに登録されている:
+#
+#   GITHUB_TOKEN              — cocomi-postmanリポへのpush用 (GH_PATとは別物)
+#   LINE_CHANNEL_ACCESS_TOKEN — LINE Messaging API 送信用
+#   LINE_CHANNEL_SECRET       — LINE webhook 署名検証用
+#   LINE_USER_ID              — LINE 送信先ユーザーID
+#
+# Secret設定コマンド（将来CLI移行時に使用）:
+#   wrangler secret put GITHUB_TOKEN
+#   wrangler secret put LINE_CHANNEL_ACCESS_TOKEN
+#   wrangler secret put LINE_CHANNEL_SECRET
+#   wrangler secret put LINE_USER_ID
+
+# ------------------------------------------------------------
+# Bindings（現時点ではなし）
+# ------------------------------------------------------------
+# cocomi-worker は外部API (GitHub + LINE) のみを使用するため、
+# D1 / KV / R2 / Vectorize / Durable Objects / Service Bindings は使用していない。
+
+# ------------------------------------------------------------
+# Triggers（現時点ではfetchハンドラのみ）
+# ------------------------------------------------------------
+# Cron Triggers なし。
+# fetch handler で LINE webhook (POST) と ヘルスチェック (GET) を受ける。
+
+# ------------------------------------------------------------
+# Routes
+# ------------------------------------------------------------
+# workers.dev デフォルトドメイン使用:
+#   https://cocomi-worker.k-akiyaman.workers.dev
+# Preview URLs: Inactive（無効化済み）
