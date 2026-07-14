@@ -1,4 +1,4 @@
-// worker.js v2.6 — COCOMI Worker
+// worker.js v2.7 — COCOMI Worker
 // このファイルはCloudflare Workerのメインハンドラ
 // v1.0: LINE Webhook受信→テキスト指示→GitHub push→LINE返信
 // v1.1追加: LINEファイル受信→種別自動判定→capsules/missions/にGitHub push
@@ -14,10 +14,14 @@
 // v2.3追加: ファイル名降順ソート＆「もっと見る」ページネーション
 // v2.4改善: 日付抽出ソート（全ファイル混合で新しい順）＆ボタン表示名短縮
 // v2.6追加: キーワード振り分け強化 — アイデア/メモ/計画書対応＋ideasサブフォルダ自動判定＋inboxガイド
+// v2.7追加: 無言の失敗撲滅 — 全catchで原因コード表出/replyToLine resp.ok検査/resolveDestination⑥デフォルト実装/WORKER_VERSION一元化
 
 // ============================================================
 // 定数定義
 // ============================================================
+
+// v2.7追加 - バージョン一元化(GETヘルスチェックと状態コマンドの版数driftを防ぐ)
+const WORKER_VERSION = 'v2.7';
 
 // v1.0 テキスト指示用のプロジェクトホワイトリスト
 const VALID_PROJECTS = [
@@ -282,6 +286,10 @@ function resolveDestination(fileName, content) {
   if (isMissionLikeFile(fileName)) {
     return { dest: 'inbox/unvalidated', method: 'mission-like-no-tag', needsAsk: true };
   }
+
+  // ⑥ デフォルト inbox/ (v2.7修正: コメントで約束されていたreturnが実装に無く、
+  // どのルールにも掛からないファイルでundefined分解のTypeErrorになる潜在バグを修繕)
+  return { dest: DEFAULT_DEST, method: 'default' };
 }
 
 // ============================================================
@@ -577,11 +585,30 @@ async function readFileFromGitHub(env, filePath) {
 }
 
 // ============================================================
+// v2.7追加: エラー整形ヘルパー(無言の失敗撲滅)
+// ============================================================
+
+// v2.7追加 - エラーを人間が診断できる形に整形する。原因コードを必ず表出させる
+// 54日間の嘘(catch→「まだ空です」)の再発防止。401/403/404は一次診断ヒント付き
+function formatError(context, err) {
+  const msg = (err && err.message) ? err.message : String(err);
+  let hint = '';
+  if (/\b40[13]\b/.test(msg)) {
+    hint = '\n🔑 401/403 = 鍵(トークン)の死亡疑い。台帳05_secrets-inventoryの故障モード表を見て！';
+  } else if (/\b404\b/.test(msg)) {
+    hint = '\n🔍 404 = パスが存在しない。「フォルダ一覧」で確認してね';
+  }
+  return `❌ ${context}に失敗しました\n🔧 原因: ${msg.substring(0, 160)}${hint}`;
+}
+
+// ============================================================
 // LINE返信
 // ============================================================
 
+// v2.7修正 - LINE返信のresp.okを検査する(返信失敗を無言にしない)
+// 返信経路自体が死んでいる時はユーザーに届けられない=Workers Logsが唯一の証言者
 async function replyToLine(env, replyToken, message) {
-  await fetch('https://api.line.me/v2/bot/message/reply', {
+  const resp = await fetch('https://api.line.me/v2/bot/message/reply', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -592,11 +619,17 @@ async function replyToLine(env, replyToken, message) {
       messages: [{ type: 'text', text: message }]
     })
   });
+  if (!resp.ok) {
+    const errBody = await resp.text().catch(() => '');
+    console.error(`🩸 LINE返信失敗: ${resp.status} ${errBody.substring(0, 200)}`);
+  }
+  return resp.ok;
 }
 
 // v2.2追加: Flex Messageで返信する
+// v2.7修正 - resp.ok検査を追加(Flex返信失敗も無言にしない)
 async function replyFlexToLine(env, replyToken, altText, flexContents) {
-  await fetch('https://api.line.me/v2/bot/message/reply', {
+  const resp = await fetch('https://api.line.me/v2/bot/message/reply', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -611,6 +644,11 @@ async function replyFlexToLine(env, replyToken, altText, flexContents) {
       }]
     })
   });
+  if (!resp.ok) {
+    const errBody = await resp.text().catch(() => '');
+    console.error(`🩸 LINE Flex返信失敗: ${resp.status} ${errBody.substring(0, 200)}`);
+  }
+  return resp.ok;
 }
 
 // v2.2追加: ファイル一覧をタップ可能なFlex Messageに変換する
@@ -968,7 +1006,7 @@ async function handleCommand(env, event) {
   const statusAliases = ['状態', 'じょうたい', 'ステータス', 'status', 'ポストマン', 'postman'];
   if (statusAliases.includes(text.toLowerCase())) {
     await replyToLine(env, event.replyToken,
-      '🐾 COCOMI Worker v2.6 稼働中！\n\n' +
+      `🐾 COCOMI Worker ${WORKER_VERSION} 稼働中！\n\n` +
       '📋 テキスト指示: 「プロジェクト名: 指示内容」\n' +
       '📁 ファイル配達: .mdファイルを送信\n' +
       '💊 カプセル保管: カプセルファイルを送信→自動判定→GitHub保管\n' +
@@ -980,7 +1018,8 @@ async function handleCommand(env, event) {
       '❓ ヘルプ: 「ヘルプ」でコマンド一覧\n\n' +
       '🛡️ v2.0: 安全バリデーション\n' +
       '🆕 v2.4: 日付抽出ソート＆ボタン表示名短縮\n' +
-      '🆕 v2.6: キーワード振り分け強化（アイデア/メモ/計画書＋inboxガイド）'
+      '🆕 v2.6: キーワード振り分け強化（アイデア/メモ/計画書＋inboxガイド）' +
+      '\n🆕 v2.7: 無言の失敗撲滅 — エラーは原因コード付きで表示'
     );
     return true;
   }
@@ -1158,9 +1197,8 @@ async function handleCommand(env, event) {
       await replyFlexToLine(env, event.replyToken, 'カプセル保管庫', flex);
     } catch (err) {
       console.error('カプセル一覧取得エラー:', err);
-      await replyToLine(env, event.replyToken,
-        '📦 カプセル保管庫はまだ空です。\nファイルを送信して保管を始めよう！'
-      );
+      // v2.7修正 - エラーを「空です」と誤訳しない(54日間の嘘の張本人だった箇所)
+      await replyToLine(env, event.replyToken, formatError('カプセル一覧の取得', err));
     }
     return true;
   }
@@ -1193,9 +1231,8 @@ async function handleCommand(env, event) {
       await replyToLine(env, event.replyToken, reply);
     } catch (err) {
       console.error('アイデア一覧取得エラー:', err);
-      await replyToLine(env, event.replyToken,
-        '💡 アイデア保管庫はまだ空です。\n「アイデア app: 〇〇」で保管できるよ！'
-      );
+      // v2.7修正 - エラーを「空です」と誤訳しない
+      await replyToLine(env, event.replyToken, formatError('アイデア一覧の取得', err));
     }
     return true;
   }
@@ -1253,9 +1290,8 @@ async function handleCommand(env, event) {
         await replyToLine(env, event.replyToken, reply);
       } catch (err) {
         console.error('フォルダ一覧取得エラー:', err);
-        await replyToLine(env, event.replyToken,
-          '📁 フォルダ一覧の取得に失敗しました。\nもう一度試してみてください。'
-        );
+        // v2.7修正 - 原因コードを表出させる
+        await replyToLine(env, event.replyToken, formatError('フォルダ一覧の取得', err));
       }
       return true;
     }
@@ -1280,9 +1316,8 @@ async function handleCommand(env, event) {
         await replyFlexToLine(env, event.replyToken, `${targetPath}の中身`, flex);
       } catch (err) {
         console.error('フォルダ中身取得エラー:', err);
-        await replyToLine(env, event.replyToken,
-          `📁 「${targetPath}」の取得に失敗しました。\nパスを確認してもう一度試してみてね。`
-        );
+        // v2.7修正 - 原因コードを表出させる(404はtry内で処理済みなのでcatchは本物の異常)
+        await replyToLine(env, event.replyToken, formatError(`フォルダ「${targetPath}」の取得`, err));
       }
       return true;
     }
@@ -1302,7 +1337,7 @@ export default {
 
     // GETリクエスト → ヘルスチェック（v2.0更新）
     if (request.method === 'GET') {
-      return new Response('🐾 COCOMI Worker is alive! v2.5\n📁 全機能対応\n🆕 v2.5: スマート振り分け＆missionタグ自動注入', {
+      return new Response(`🐾 COCOMI Worker is alive! ${WORKER_VERSION}\n📁 全機能対応\n🆕 v2.7: 無言の失敗撲滅(エラーは原因コード付きで表示)`, {
         headers: { 'Content-Type': 'text/plain; charset=utf-8' }
       });
     }
